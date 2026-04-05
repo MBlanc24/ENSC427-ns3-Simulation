@@ -53,6 +53,35 @@ main(int argc, char* argv[])
     InternetStackHelper stack;
     stack.Install(nodes);
 
+    Ipv4AddressHelper address;
+
+    address.SetBase("10.1.1.0", "255.255.255.0");
+    Ipv4InterfaceContainer i1 = address.Assign(d1);
+    address.SetBase("10.1.2.0", "255.255.255.0");
+    Ipv4InterfaceContainer i2 = address.Assign(d2);
+    address.SetBase("10.1.3.0", "255.255.255.0");
+    Ipv4InterfaceContainer i3 = address.Assign(d3);
+
+    Ipv4GlobalRoutingHelper::PopulateRoutingTables();
+
+    //receiver tcp
+    PacketSinkHelper sink("ns3::TcpSocketFactory",
+                      InetSocketAddress(Ipv4Address::GetAny(), 8080));
+
+    ApplicationContainer sinkApp = sink.Install(nodes.Get(3));
+    sinkApp.Start(Seconds(0.0));
+    sinkApp.Stop(Seconds(60.0));
+
+    //sender tcp
+    BulkSendHelper source("ns3::TcpSocketFactory",
+                      InetSocketAddress(i3.GetAddress(1), 8080));
+
+    source.SetAttribute("MaxBytes", UintegerValue(0));
+
+    ApplicationContainer sourceApp = source.Install(nodes.Get(0));
+    sourceApp.Start(Seconds(1.0));
+    sourceApp.Stop(Seconds(60.0));
+
     Simulator::Run();
     Simulator::Destroy();
     return 0;
