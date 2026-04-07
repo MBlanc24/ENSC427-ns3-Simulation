@@ -14,16 +14,47 @@ using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE("PROJECT");
 
+//variables to compute rtt avg
+double rttSum = 0.0;
+int rttCount = 0;
+
+static void
+RttTracer(Time oldRtt, Time newRtt)
+{
+    std::cout << Simulator::Now().GetSeconds()
+        << "," << newRtt.GetMilliSeconds() << std::endl;
+
+    if (Simulator::Now().GetSeconds() > 5.0)
+    {
+        double rttMs = newRtt.GetMilliSeconds();
+        rttSum += rttMs;
+        rttCount++;
+    }
+}
+
+static void
+ConnectRttTrace()
+{
+    Config::ConnectWithoutContext(
+        "/NodeList/0/$ns3::TcpL4Protocol/SocketList/0/RTT",
+        MakeCallback(&RttTracer));
+}
+
 int
 main(int argc, char* argv[])
 {
 
+    Config::SetDefault("ns3::TcpSocket::SndBufSize", UintegerValue(1 << 20));
+    Config::SetDefault("ns3::TcpSocket::RcvBufSize", UintegerValue(1 << 20));
+
     std::string tcpType = "cubic";
-    double loss;
+    std::string queueSize = "100p";
+    double loss = 0.0;
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("tcpType", "TCP variant: cubic or bbr", tcpType);
     cmd.AddValue("loss", "Packet loss rate", loss);
+    cmd.AddValue("queueSize", "Queue size, e.g. 20p, 50p, 100p", queueSize);
     cmd.Parse(argc, argv);
 
     Time::SetResolution(Time::NS);
@@ -65,7 +96,7 @@ main(int argc, char* argv[])
     satLink.SetDeviceAttribute ("DataRate", StringValue ("10Mbps"));
     satLink.SetChannelAttribute ("Delay", StringValue ("100ms"));
     //DropTail queue
-    satLink.SetQueue("ns3::DropTailQueue", "MaxSize", StringValue("100p"));
+    satLink.SetQueue("ns3::DropTailQueue<Packet>", "MaxSize", QueueSizeValue(QueueSize(queueSize)));
 
     //installing links for the routers
     NetDeviceContainer d1 = gndLink.Install(senderRouter);
@@ -107,25 +138,33 @@ main(int argc, char* argv[])
 
 
     //RateErrorModel simulates wireless loss
+    if (loss > 0.0) {
     Ptr<RateErrorModel> em = CreateObject<RateErrorModel>();
+    em->SetAttribute("ErrorUnit", EnumValue(RateErrorModel::ERROR_UNIT_PACKET));
     em->SetAttribute("ErrorRate", DoubleValue(loss)); //DoubleValue() defines losses
 
-    //packet loss only on one side of the satellite link reciever
+    //packet loss only on one side of the satellite link receiver
     d2.Get(1)->SetAttribute("ReceiveErrorModel", PointerValue(em));
+    }
 
+    
 
-
+    Simulator::Schedule(Seconds(1.001), &ConnectRttTrace);
 
     Simulator::Run();
 
-    //plot results for throughput v packetloss:
-    Ptr<PacketSink> sinkPtr = DynamicCast<PacketSink>(sinkApp.Get(0));
-    uint64_t totalBytes = sinkPtr->GetTotalRx();
-    double throughputMbps = (totalBytes * 8.0) / (59.0 * 1000000.0);
+    //plot results for average rtt
+    double avgRtt = rttSum / rttCount;
+    std::cout << "Average RTT: " << avgRtt << " ms" << std::endl;
 
-    std::cout << "TCP Type: " << tcpType << std::endl;
-    std::cout << "Total Bytes Received: " << totalBytes << std::endl;
-    std::cout << "Average Throughput: " << throughputMbps << " Mbps" << std::endl;
+    //plot results for throughput v packetloss:
+    // Ptr<PacketSink> sinkPtr = DynamicCast<PacketSink>(sinkApp.Get(0));
+    // uint64_t totalBytes = sinkPtr->GetTotalRx();
+    // double throughputMbps = (totalBytes * 8.0) / (59.0 * 1000000.0);
+
+    // std::cout << "TCP Type: " << tcpType << std::endl;
+    // std::cout << "Total Bytes Received: " << totalBytes << std::endl;
+    // std::cout << "Average Throughput: " << throughputMbps << " Mbps" << std::endl;
 
     Simulator::Destroy();
     return 0;
