@@ -19,9 +19,11 @@ main(int argc, char* argv[])
 {
 
     std::string tcpType = "cubic";
+    double loss;
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("tcpType", "TCP variant: cubic or bbr", tcpType);
+    cmd.AddValue("loss", "Packet loss rate", loss);
     cmd.Parse(argc, argv);
 
     Time::SetResolution(Time::NS);
@@ -106,7 +108,7 @@ main(int argc, char* argv[])
 
     //RateErrorModel simulates wireless loss
     Ptr<RateErrorModel> em = CreateObject<RateErrorModel>();
-    em->SetAttribute("ErrorRate", DoubleValue(1e-5));
+    em->SetAttribute("ErrorRate", DoubleValue(loss)); //DoubleValue() defines losses
 
     //packet loss only on one side of the satellite link reciever
     d2.Get(1)->SetAttribute("ReceiveErrorModel", PointerValue(em));
@@ -115,6 +117,16 @@ main(int argc, char* argv[])
 
 
     Simulator::Run();
+
+    //plot results for throughput v packetloss:
+    Ptr<PacketSink> sinkPtr = DynamicCast<PacketSink>(sinkApp.Get(0));
+    uint64_t totalBytes = sinkPtr->GetTotalRx();
+    double throughputMbps = (totalBytes * 8.0) / (59.0 * 1000000.0);
+
+    std::cout << "TCP Type: " << tcpType << std::endl;
+    std::cout << "Total Bytes Received: " << totalBytes << std::endl;
+    std::cout << "Average Throughput: " << throughputMbps << " Mbps" << std::endl;
+
     Simulator::Destroy();
     return 0;
 }
