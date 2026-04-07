@@ -18,6 +18,24 @@ NS_LOG_COMPONENT_DEFINE("PROJECT");
 double rttSum = 0.0;
 int rttCount = 0;
 
+//only use following function when doing cubic vs bbr
+static TypeId
+GetTcpTypeId(const std::string& tcpType)
+{
+    if (tcpType == "cubic")
+    {
+        return TcpCubic::GetTypeId();
+    }
+    else if (tcpType == "bbr")
+    {
+        return TcpBbr::GetTypeId();
+    }
+    else
+    {
+        NS_FATAL_ERROR("Invalid TCP type. Use cubic or bbr");
+    }
+}
+
 int
 main(int argc, char* argv[])
 {
@@ -25,33 +43,42 @@ main(int argc, char* argv[])
     Config::SetDefault("ns3::TcpSocket::SndBufSize", UintegerValue(1 << 20));
     Config::SetDefault("ns3::TcpSocket::RcvBufSize", UintegerValue(1 << 20));
 
-    std::string tcpType = "cubic";
+    //used for comparing cubic vs bbr
+    std::string tcpType1 = "cubic";
+    std::string tcpType2 = "bbr";
+
+    //std::string tcpType = "cubic";
     std::string queueSize = "100p";
     double loss = 0.0;
 
     CommandLine cmd(__FILE__);
-    cmd.AddValue("tcpType", "TCP variant: cubic or bbr", tcpType);
+    //cmd.AddValue("tcpType", "TCP variant: cubic or bbr", tcpType);
     cmd.AddValue("loss", "Packet loss rate", loss);
     cmd.AddValue("queueSize", "Queue size, e.g. 20p, 50p, 100p", queueSize);
+
+    cmd.AddValue("tcpType1", "TCP variant for sender 1: cubic or bbr", tcpType1);
+    cmd.AddValue("tcpType2", "TCP variant for sender 2: cubic or bbr", tcpType2);
+
     cmd.Parse(argc, argv);
 
     Time::SetResolution(Time::NS);
 
+    //remove if/else when doing cubic vs bbr
     //TCP CUBIC
-    if (tcpType == "cubic") {
-        Config::SetDefault("ns3::TcpL4Protocol::SocketType",
-            TypeIdValue(TcpCubic::GetTypeId()));
-    }
+    // if (tcpType == "cubic") {
+    //     Config::SetDefault("ns3::TcpL4Protocol::SocketType",
+    //         TypeIdValue(TcpCubic::GetTypeId()));
+    // }
 
-    //TCP BBR
-    else if (tcpType == "bbr") {
-        Config::SetDefault("ns3::TcpL4Protocol::SocketType",
-            TypeIdValue(TcpBbr::GetTypeId()));
-    }
+    // //TCP BBR
+    // else if (tcpType == "bbr") {
+    //     Config::SetDefault("ns3::TcpL4Protocol::SocketType",
+    //         TypeIdValue(TcpBbr::GetTypeId()));
+    // }
 
-    else {
-        NS_FATAL_ERROR("Invalid tcpType. Use --tcpType=cubic or --tcpType=bbr");
-    }
+    // else {
+    //     NS_FATAL_ERROR("Invalid tcpType. Use --tcpType=cubic or --tcpType=bbr");
+    // }
 
 	NS_LOG_INFO("Creating Topology"); //added
 
@@ -88,8 +115,13 @@ main(int argc, char* argv[])
     InternetStackHelper stack;
     stack.Install(nodes);
 
-    Ipv4AddressHelper address;
+    //following lines only for cubic vs bbr
+    TypeId tid1 = GetTcpTypeId(tcpType1);
+    TypeId tid2 = GetTcpTypeId(tcpType2);
+    Config::Set("/NodeList/0/$ns3::TcpL4Protocol/SocketType", TypeIdValue(tid1));
+    Config::Set("/NodeList/1/$ns3::TcpL4Protocol/SocketType", TypeIdValue(tid2));
 
+    Ipv4AddressHelper address;
     address.SetBase("10.1.1.0", "255.255.255.0");
     Ipv4InterfaceContainer i1a = address.Assign(d1a);
     address.SetBase("10.1.2.0", "255.255.255.0");
@@ -99,9 +131,8 @@ main(int argc, char* argv[])
     Ipv4InterfaceContainer i2 = address.Assign(d2);
     address.SetBase("10.1.4.0", "255.255.255.0");
     Ipv4InterfaceContainer i3 = address.Assign(d3);
-
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
-    
+
 
     //receiver tcp socket 1
     PacketSinkHelper sink1("ns3::TcpSocketFactory",
@@ -130,7 +161,7 @@ main(int argc, char* argv[])
         InetSocketAddress(i3.GetAddress(1), 8081));
     source2.SetAttribute("MaxBytes", UintegerValue(0));
     ApplicationContainer sourceApp2 = source2.Install(nodes.Get(1));
-    sourceApp2.Start(Seconds(1.0));
+    sourceApp2.Start(Seconds(1.1));
     sourceApp2.Stop(Seconds(60.0));
 
 
@@ -156,15 +187,21 @@ main(int argc, char* argv[])
     double throughput1 = (totalBytes1 * 8.0) / (59.0 * 1000000.0);
     double throughput2 = (totalBytes2 * 8.0) / (59.0 * 1000000.0);
 
-    std::cout << "Flow 1 Throughput: " << throughput1 << " Mbps" << std::endl;
-    std::cout << "Flow 2 Throughput: " << throughput2 << " Mbps" << std::endl;
+    std::cout << "Flow 1 TCP Type: " << tcpType1 << std::endl;
+    std::cout << "Flow 1 Throughput: " << throughput1 << " Mbps" << std::endl << std::endl;
+
+    std::cout << "Flow 2 TCP Type: " << tcpType2 << std::endl;
+    std::cout << "Flow 2 Throughput: " << throughput2 << " Mbps" << std::endl << std::endl;
 
     double fairness = ((throughput1 + throughput2) * (throughput1 + throughput2)) /
     (2 * (throughput1 * throughput1 + throughput2 * throughput2));
 
     std::cout << "Jain Fairness Index: " << fairness << std::endl;
 
+    
+
     Simulator::Destroy();
     return 0;
 }
+
 
