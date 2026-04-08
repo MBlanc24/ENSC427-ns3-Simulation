@@ -51,9 +51,12 @@ main(int argc, char* argv[])
     std::string queueSize = "100p";
     double loss = 0.0;
 
+    std::string satDelay = "25ms";
+
     CommandLine cmd(__FILE__);
     //cmd.AddValue("tcpType", "TCP variant: cubic or bbr", tcpType);
     cmd.AddValue("loss", "Packet loss rate", loss);
+    cmd.AddValue("satDelay", "Satellite one-way delay", satDelay);
     cmd.AddValue("queueSize", "Queue size, e.g. 20p, 50p, 100p", queueSize);
 
     cmd.AddValue("tcpType1", "TCP variant for sender 1: cubic or bbr", tcpType1);
@@ -100,8 +103,8 @@ main(int argc, char* argv[])
 
     // Satellite link - used for router to router
     PointToPointHelper satLink;
-    satLink.SetDeviceAttribute ("DataRate", StringValue ("10Mbps"));
-    satLink.SetChannelAttribute ("Delay", StringValue ("100ms"));
+    satLink.SetDeviceAttribute ("DataRate", StringValue ("100Mbps"));
+    satLink.SetChannelAttribute ("Delay", StringValue(satDelay));
     //DropTail queue
     satLink.SetQueue("ns3::DropTailQueue<Packet>", "MaxSize", QueueSizeValue(QueueSize(queueSize)));
 
