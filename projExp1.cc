@@ -27,7 +27,7 @@ main(int argc, char* argv[])
     CommandLine cmd(__FILE__);
     cmd.AddValue("tcpType", "TCP variant: cubic or bbr", tcpType);
     cmd.AddValue("loss", "Packet loss rate", loss);
-        cmd.AddValue("satDelay", "Satellite one-way delay", satDelay);
+    cmd.AddValue("satDelay", "Satellite one-way delay", satDelay);
 
     //cmd.AddValue("queueSize", "Queue size, e.g. 20p, 50p, 100p", queueSize);
     cmd.Parse(argc, argv);
@@ -68,7 +68,7 @@ main(int argc, char* argv[])
 
     // Satellite link - used for router to router
     PointToPointHelper satLink;
-    satLink.SetDeviceAttribute ("DataRate", StringValue ("100Mbps"));
+    satLink.SetDeviceAttribute ("DataRate", StringValue ("100Mbps")); //bottleneck bandwidth
     satLink.SetChannelAttribute ("Delay", StringValue(satDelay));
     //DropTail queue
     //satLink.SetQueue("ns3::DropTailQueue<Packet>", "MaxSize", QueueSizeValue(QueueSize(queueSize)));
@@ -120,7 +120,7 @@ main(int argc, char* argv[])
 
     //packet loss only on one side of the satellite link receiver
     d2.Get(1)->SetAttribute("ReceiveErrorModel", PointerValue(em));
-   // }
+    //}
 
     
 
