@@ -4,17 +4,17 @@
 #include "ns3/network-module.h"
 #include "ns3/point-to-point-module.h"
 
-//  Network Topology
-//
-// Sender ---- Router ---- Router ---- Receiver
-//                 ↑ satellite link ↑
-//
-
 using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE("PROJECT");
 
-//variables to compute rtt avg
+/* ==========================================================
+   PROCESS 1: RTT MONITORING & STEADY-STATE FILTERING
+   Define global variables and trace callbacks to capture Round-Trip
+   Time (RTT) metrics. A 5-second warmup period is enforced to ensure
+   measurements are only recorded after the TCP flows exit their
+   initial slow-start phase and reach a steady state.
+   ========================================================== */
 double rttSum = 0.0;
 int rttCount = 0;
 
@@ -22,7 +22,7 @@ static void
 RttTracer(Time oldRtt, Time newRtt)
 {
     std::cout << Simulator::Now().GetSeconds()
-        << "," << newRtt.GetMilliSeconds() << std::endl;
+              << "," << newRtt.GetMilliSeconds() << std::endl;
 
     if (Simulator::Now().GetSeconds() > 5.0)
     {
@@ -40,74 +40,90 @@ ConnectRttTrace()
         MakeCallback(&RttTracer));
 }
 
-int
-main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
-
+    /* ==========================================================
+       PROCESS 2: SIMULATION PARAMETERIZATION & BUFFER SETUP
+       Initialize high-capacity TCP socket buffers to prevent premature
+       clamping on the high-BDP satellite link. Dynamic command-line
+       arguments are parsed to allow rapid testing of queue sizes,
+       delays, and TCP variants.
+       ========================================================== */
     Config::SetDefault("ns3::TcpSocket::SndBufSize", UintegerValue(1 << 20));
     Config::SetDefault("ns3::TcpSocket::RcvBufSize", UintegerValue(1 << 20));
 
     std::string tcpType = "cubic";
     std::string queueSize = "100p";
     double loss = 0.0;
-
-            std::string satDelay = "25ms";
-
+    std::string satDelay = "25ms";
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("tcpType", "TCP variant: cubic or bbr", tcpType);
     cmd.AddValue("loss", "Packet loss rate", loss);
     cmd.AddValue("queueSize", "Queue size, e.g. 20p, 50p, 100p", queueSize);
-        cmd.AddValue("satDelay", "Satellite one-way delay", satDelay);
+    cmd.AddValue("satDelay", "Satellite one-way delay", satDelay);
 
     cmd.Parse(argc, argv);
 
     Time::SetResolution(Time::NS);
 
-    //TCP CUBIC
-    if (tcpType == "cubic") {
+    /* ==========================================================
+       PROCESS 3: TCP CONGESTION CONTROL SELECTION
+       Dynamically bind the requested congestion control protocol
+       to the global ns-3 socket factory based on the parsed
+       command-line arguments.
+       ========================================================== */
+    if (tcpType == "cubic")
+    {
         Config::SetDefault("ns3::TcpL4Protocol::SocketType",
-            TypeIdValue(TcpCubic::GetTypeId()));
+                           TypeIdValue(TcpCubic::GetTypeId()));
     }
-
-    //TCP BBR
-    else if (tcpType == "bbr") {
+    else if (tcpType == "bbr")
+    {
         Config::SetDefault("ns3::TcpL4Protocol::SocketType",
-            TypeIdValue(TcpBbr::GetTypeId()));
+                           TypeIdValue(TcpBbr::GetTypeId()));
     }
-
-    else {
+    else
+    {
         NS_FATAL_ERROR("Invalid tcpType. Use --tcpType=cubic or --tcpType=bbr");
     }
 
-	NS_LOG_INFO("Creating Topology"); //added
+    NS_LOG_INFO("Creating Topology");
 
-    //create nodes
+    /* ==========================================================
+       PROCESS 4: TOPOLOGY GENERATION & QUEUE CONFIGURATION
+       Construct the 4-node dumbbell network. The core satellite link
+       is heavily parameterized here (50Mbps bandwidth, dynamic delay,
+       and a strict DropTail queue) to act as the bottleneck for
+       bufferbloat and latency evaluations.
+       ========================================================== */
     NodeContainer nodes;
     nodes.Create(4);
 
-    //define specific names for each node container
     NodeContainer senderRouter(nodes.Get(0), nodes.Get(1));
     NodeContainer routerRouter(nodes.Get(1), nodes.Get(2));
     NodeContainer routerReceiver(nodes.Get(2), nodes.Get(3));
 
-    // Ground links - used for sender to router; router to reciever
     PointToPointHelper gndLink;
-    gndLink.SetDeviceAttribute ("DataRate", StringValue ("100Mbps"));
-    gndLink.SetChannelAttribute ("Delay", StringValue ("2ms"));
+    gndLink.SetDeviceAttribute("DataRate", StringValue("100Mbps"));
+    gndLink.SetChannelAttribute("Delay", StringValue("2ms"));
 
-    // Satellite link - used for router to router
     PointToPointHelper satLink;
-    satLink.SetDeviceAttribute ("DataRate", StringValue ("50Mbps"));
-    satLink.SetChannelAttribute ("Delay", StringValue(satDelay));
-    //DropTail queue
+    satLink.SetDeviceAttribute("DataRate", StringValue("50Mbps"));
+    satLink.SetChannelAttribute("Delay", StringValue(satDelay));
     satLink.SetQueue("ns3::DropTailQueue<Packet>", "MaxSize", QueueSizeValue(QueueSize(queueSize)));
 
-    //installing links for the routers
     NetDeviceContainer d1 = gndLink.Install(senderRouter);
     NetDeviceContainer d2 = satLink.Install(routerRouter);
     NetDeviceContainer d3 = gndLink.Install(routerReceiver);
 
+    /* ==========================================================
+       PROCESS 5: INTERNET STACK & SUBNET ROUTING
+       Deploy the IPv4 protocol stack across all simulation nodes
+       and assign distinct network subnets to the physical links.
+       Global routing tables are generated to guarantee end-to-end
+       packet delivery.
+       ========================================================== */
     InternetStackHelper stack;
     stack.Install(nodes);
 
@@ -115,25 +131,30 @@ main(int argc, char* argv[])
 
     address.SetBase("10.1.1.0", "255.255.255.0");
     Ipv4InterfaceContainer i1 = address.Assign(d1);
+
     address.SetBase("10.1.2.0", "255.255.255.0");
     Ipv4InterfaceContainer i2 = address.Assign(d2);
+
     address.SetBase("10.1.3.0", "255.255.255.0");
     Ipv4InterfaceContainer i3 = address.Assign(d3);
 
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
-    
 
-    //receiver tcp socket
+    /* ==========================================================
+       PROCESS 6: APPLICATION LAYER DEPLOYMENT
+       A PacketSink acts as the receiver on Node 3, while a
+       BulkSendApplication on Node 0 simulates a continuous,
+       unlimited file transfer to saturate the satellite bottleneck.
+       ========================================================== */
     PacketSinkHelper sink("ns3::TcpSocketFactory",
-        InetSocketAddress(Ipv4Address::GetAny(), 8080));
+                          InetSocketAddress(Ipv4Address::GetAny(), 8080));
 
     ApplicationContainer sinkApp = sink.Install(nodes.Get(3));
     sinkApp.Start(Seconds(0.0));
     sinkApp.Stop(Seconds(60.0));
 
-    //sender tcp socket
     BulkSendHelper source("ns3::TcpSocketFactory",
-        InetSocketAddress(i3.GetAddress(1), 8080));
+                          InetSocketAddress(i3.GetAddress(1), 8080));
 
     source.SetAttribute("MaxBytes", UintegerValue(0));
 
@@ -141,32 +162,37 @@ main(int argc, char* argv[])
     sourceApp.Start(Seconds(1.0));
     sourceApp.Stop(Seconds(60.0));
 
+    /* ==========================================================
+       PROCESS 7: CHANNEL IMPAIRMENT (WIRELESS LOSS)
+       Attach a RateErrorModel to the receiving interface of the
+       satellite link if a packet loss rate is specified. This
+       simulates environmental fading independently of router drops.
+       ========================================================== */
+    if (loss > 0.0)
+    {
+        Ptr<RateErrorModel> em = CreateObject<RateErrorModel>();
+        em->SetAttribute("ErrorUnit", EnumValue(RateErrorModel::ERROR_UNIT_PACKET));
+        em->SetAttribute("ErrorRate", DoubleValue(loss));
 
-    //RateErrorModel simulates wireless loss
-    if (loss > 0.0) {
-    Ptr<RateErrorModel> em = CreateObject<RateErrorModel>();
-    em->SetAttribute("ErrorUnit", EnumValue(RateErrorModel::ERROR_UNIT_PACKET));
-    em->SetAttribute("ErrorRate", DoubleValue(loss)); //DoubleValue() defines losses
-
-    //packet loss only on one side of the satellite link receiver
-    d2.Get(1)->SetAttribute("ReceiveErrorModel", PointerValue(em));
+        d2.Get(1)->SetAttribute("ReceiveErrorModel", PointerValue(em));
     }
 
-    
-
+    /* ==========================================================
+       PROCESS 8: EXECUTION & LATENCY ANALYSIS
+       Schedule the RTT trace hook to activate shortly after the
+       flow starts. Following the 60-second execution, the average
+       steady-state RTT is computed to evaluate latency inflation.
+       ========================================================== */
     Simulator::Schedule(Seconds(1.001), &ConnectRttTrace);
 
     Simulator::Run();
 
-    //plot results for average rtt
     double avgRtt = rttSum / rttCount;
     std::cout << "Average RTT: " << avgRtt << " ms" << std::endl;
 
-    //plot results for throughput v packetloss:
     // Ptr<PacketSink> sinkPtr = DynamicCast<PacketSink>(sinkApp.Get(0));
     // uint64_t totalBytes = sinkPtr->GetTotalRx();
     // double throughputMbps = (totalBytes * 8.0) / (59.0 * 1000000.0);
-
     // std::cout << "TCP Type: " << tcpType << std::endl;
     // std::cout << "Total Bytes Received: " << totalBytes << std::endl;
     // std::cout << "Average Throughput: " << throughputMbps << " Mbps" << std::endl;
@@ -174,5 +200,3 @@ main(int argc, char* argv[])
     Simulator::Destroy();
     return 0;
 }
-
-
